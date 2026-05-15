@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { fetchApi } from '../lib/api';
 import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
-import { LayoutDashboard, Users, CreditCard, Settings, LogOut, Menu, X, ArrowDownLeft, ArrowUpRight, Copy, User } from 'lucide-react';
+import { LayoutDashboard, Users, CreditCard, Settings, LogOut, Menu, X, ArrowDownLeft, ArrowUpRight, Copy, User, ChevronDown, ChevronUp, Trash2, WifiOff, Wifi, AlertTriangle } from 'lucide-react';
 
 export default function Admin() {
   const [token, setToken] = useState(localStorage.getItem('adminToken') || '');
@@ -23,6 +23,10 @@ export default function Admin() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [step, setStep] = useState(1);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [expandedUserId, setExpandedUserId] = useState<string|null>(null);
+  const [userRecords, setUserRecords] = useState<Record<string, any>>({});
+  const [loadingRecords, setLoadingRecords] = useState<string|null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string|null>(null);
   
   // Check if stored token is expired before trying to load data
   const isTokenExpired = (t: string): boolean => {
@@ -190,6 +194,75 @@ export default function Admin() {
      } catch(e) {}
   };
 
+  const loadUserRecords = async (userId: string) => {
+    if (userRecords[userId]) {
+      setExpandedUserId(prev => prev === userId ? null : userId);
+      return;
+    }
+    setLoadingRecords(userId);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/records`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUserRecords(prev => ({ ...prev, [userId]: data }));
+        setExpandedUserId(userId);
+      } else {
+        toast.error('فشل تحميل سجلات المستخدم');
+      }
+    } catch (e) {
+      toast.error('خطأ في تحميل السجلات');
+    } finally {
+      setLoadingRecords(null);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        toast.success('تم حذف المستخدم بنجاح');
+        setShowDeleteConfirm(null);
+        setExpandedUserId(null);
+        setUserRecords(prev => { const n = { ...prev }; delete n[userId]; return n; });
+        loadData();
+      } else {
+        toast.error('فشل حذف المستخدم');
+      }
+    } catch (e) {
+      toast.error('حدث خطأ');
+    }
+  };
+
+  const handleToggleApi = async (userId: string) => {
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/toggle-api`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(data.is_disabled ? 'تم تعطيل الـ API' : 'تم تفعيل الـ API');
+        // Refresh records for this user
+        setUserRecords(prev => {
+          const rec = prev[userId];
+          if (!rec) return prev;
+          return { ...prev, [userId]: { ...rec, api_key: { ...rec.api_key, is_disabled: data.is_disabled } } };
+        });
+        // Also update users list
+        setUsers(prev => prev.map(u => u.id === userId ? { ...u, api_disabled: data.is_disabled } : u));
+      } else {
+        toast.error(data.error || 'فشل تغيير حالة الـ API');
+      }
+    } catch (e) {
+      toast.error('حدث خطأ');
+    }
+  };
+
   const reverifyDeposit = async (id: string) => {
       try {
         const res = await fetch(`/api/admin/deposits/${id}/reverify`, {
@@ -320,6 +393,7 @@ export default function Admin() {
                      <table className="w-full text-right text-sm">
                         <thead className="bg-gray-50 border-b border-gray-100">
                            <tr>
+                              <th className="p-4 font-semibold text-gray-700 w-8"></th>
                               <th className="p-4 font-semibold text-gray-700">الاسم / البريد</th>
                               <th className="p-4 font-semibold text-gray-700">الرصيد</th>
                               <th className="p-4 font-semibold text-gray-700">التسجيل</th>
@@ -327,36 +401,199 @@ export default function Admin() {
                            </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                           {users.map(u => (
-                              <tr key={u.id} className="hover:bg-gray-50 transition-colors">
+                           {users.map(u => {
+                             const isExpanded = expandedUserId === u.id;
+                             const records = userRecords[u.id];
+                             const isLoading = loadingRecords === u.id;
+                             const apiDisabled = records?.api_key?.is_disabled ?? u.api_disabled;
+                             return (
+                              <React.Fragment key={u.id}>
+                              <tr className={`hover:bg-gray-50 transition-colors ${isExpanded ? 'bg-blue-50/30' : ''}`}>
+                                 <td className="p-4">
+                                    <button
+                                      onClick={() => loadUserRecords(u.id)}
+                                      className="p-1 rounded-md hover:bg-gray-200 transition text-gray-500"
+                                      title="عرض السجلات"
+                                    >
+                                      {isLoading ? (
+                                        <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                                      ) : isExpanded ? (
+                                        <ChevronUp size={16} />
+                                      ) : (
+                                        <ChevronDown size={16} />
+                                      )}
+                                    </button>
+                                 </td>
                                  <td className="p-4">
                                      <div className="font-bold text-[#0936AD]">{u.name}</div>
                                      <div className="text-gray-500 text-xs font-mono mt-1" dir="ltr">{u.email}</div>
                                  </td>
                                  <td className="p-4 font-mono font-bold text-green-600">${u.current_balance || 0}</td>
-                                 <td className="p-4 text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
+                                 <td className="p-4 text-gray-500">{new Date(u.created_at).toLocaleDateString('ar-SA')}</td>
                                  <td className="p-4">
-                                    <button 
-                                       className="px-3 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium shadow-sm transition"
-                                       onClick={async () => {
-                                          const val = prompt('أدخل المبلغ المضاف (إضافة إلى الرصيد الحالي):');
-                                          if(!val || isNaN(Number(val))) return;
-                                          try {
-                                             const res = await fetch(`/api/admin/users/${u.id}/add-balance`, {
-                                                method: 'POST',
-                                                headers: {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`},
-                                                body: JSON.stringify({ amount: Number(val) })
-                                             });
-                                             if(res.ok) { toast.success('تمت الإضافة'); loadData(); }
-                                             else toast.error('خطأ');
-                                          } catch(e){}
-                                       }}
-                                    >
-                                       إضافة رصيد
-                                    </button>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                       <button
+                                          className="px-3 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium shadow-sm transition text-xs"
+                                          onClick={async () => {
+                                             const val = prompt('أدخل المبلغ المضاف (إضافة إلى الرصيد الحالي):');
+                                             if(!val || isNaN(Number(val))) return;
+                                             try {
+                                                const res = await fetch(`/api/admin/users/${u.id}/add-balance`, {
+                                                   method: 'POST',
+                                                   headers: {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`},
+                                                   body: JSON.stringify({ amount: Number(val) })
+                                                });
+                                                if(res.ok) { toast.success('تمت الإضافة'); loadData(); }
+                                                else toast.error('خطأ');
+                                             } catch(e){}
+                                          }}
+                                       >
+                                          إضافة رصيد
+                                       </button>
+                                       <button
+                                          title={apiDisabled ? 'تفعيل الـ API' : 'تعطيل الـ API'}
+                                          className={`px-3 py-1.5 rounded-lg font-medium shadow-sm transition text-xs flex items-center gap-1 border ${apiDisabled ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-orange-50 border-orange-200 text-orange-700 hover:bg-orange-100'}`}
+                                          onClick={() => handleToggleApi(u.id)}
+                                       >
+                                          {apiDisabled ? <><Wifi size={13} /> تفعيل API</> : <><WifiOff size={13} /> تعطيل API</>}
+                                       </button>
+                                       <button
+                                          title="حذف المستخدم"
+                                          className="px-3 py-1.5 bg-red-50 border border-red-200 text-red-600 rounded-lg hover:bg-red-100 font-medium shadow-sm transition text-xs flex items-center gap-1"
+                                          onClick={() => setShowDeleteConfirm(u.id)}
+                                       >
+                                          <Trash2 size={13} /> حذف
+                                       </button>
+                                    </div>
                                  </td>
                               </tr>
-                           ))}
+
+                              {/* Expanded Records Row */}
+                              {isExpanded && records && (
+                                <tr>
+                                  <td colSpan={5} className="bg-gray-50/80 border-t border-b border-blue-100 p-0">
+                                    <div className="p-5 space-y-5" dir="rtl">
+                                      {/* Header */}
+                                      <div className="flex items-center gap-2 text-[#0936AD] font-bold text-sm border-b border-gray-200 pb-3">
+                                        <User size={15} />
+                                        سجل المستخدم: {records.user?.name}
+                                      </div>
+
+                                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                                        {/* Account Creation */}
+                                        <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                          <div className="text-xs text-gray-500 mb-1">تاريخ إنشاء الحساب</div>
+                                          <div className="font-semibold text-gray-800 text-sm">{new Date(records.user?.created_at).toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+                                          <div className="text-xs text-gray-400 mt-1 font-mono" dir="ltr">{new Date(records.user?.created_at).toLocaleTimeString()}</div>
+                                        </div>
+
+                                        {/* Email */}
+                                        <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                          <div className="text-xs text-gray-500 mb-1">البريد الإلكتروني</div>
+                                          <div className="font-semibold text-gray-800 text-sm break-all font-mono" dir="ltr">{records.user?.email}</div>
+                                        </div>
+
+                                        {/* Wallets */}
+                                        <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                          <div className="text-xs text-gray-500 mb-1">المحافظ المربوطة</div>
+                                          <div className="font-bold text-[#0936AD] text-xl">{records.wallets_count}</div>
+                                          <div className="text-xs text-gray-500 mt-1">منها <span className="font-semibold text-green-600">{records.buyer_wallets_count}</span> محفظة مشتري (نشطة)</div>
+                                        </div>
+
+                                        {/* Subscription expiry */}
+                                        <div className="bg-white rounded-xl border border-gray-200 p-4">
+                                          <div className="text-xs text-gray-500 mb-1">انتهاء الاشتراك</div>
+                                          {records.subscription?.expires_at ? (
+                                            <>
+                                              <div className={`font-semibold text-sm ${new Date(records.subscription.expires_at) > new Date() ? 'text-green-600' : 'text-red-500'}`}>
+                                                {new Date(records.subscription.expires_at).toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric' })}
+                                              </div>
+                                              <div className={`text-xs mt-1 px-2 py-0.5 rounded-full inline-block ${new Date(records.subscription.expires_at) > new Date() ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                                                {new Date(records.subscription.expires_at) > new Date() ? 'نشط' : 'منتهي'}
+                                              </div>
+                                            </>
+                                          ) : (
+                                            <div className="text-gray-400 text-sm">لا يوجد اشتراك</div>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* API Key Status */}
+                                      <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between">
+                                        <div>
+                                          <div className="text-xs text-gray-500 mb-1">حالة الـ API</div>
+                                          {records.api_key ? (
+                                            <div className="flex items-center gap-2">
+                                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${records.api_key.is_disabled ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>
+                                                {records.api_key.is_disabled ? 'معطل' : 'مفعّل'}
+                                              </span>
+                                              {records.api_key.last_used_at && (
+                                                <span className="text-xs text-gray-400">آخر استخدام: {new Date(records.api_key.last_used_at).toLocaleDateString('ar-SA')}</span>
+                                              )}
+                                            </div>
+                                          ) : (
+                                            <span className="text-gray-400 text-sm">لا يوجد API Key</span>
+                                          )}
+                                        </div>
+                                        {records.api_key && (
+                                          <button
+                                            onClick={() => handleToggleApi(u.id)}
+                                            className={`px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-1.5 border ${records.api_key.is_disabled ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-orange-50 border-orange-200 text-orange-700 hover:bg-orange-100'}`}
+                                          >
+                                            {records.api_key.is_disabled ? <><Wifi size={14} /> تفعيل</> : <><WifiOff size={14} /> تعطيل</>}
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {/* Deposits History */}
+                                      <div>
+                                        <div className="font-bold text-gray-700 text-sm mb-3 flex items-center gap-2">
+                                          <CreditCard size={14} /> سجل الدفعات ({records.deposits?.length || 0})
+                                        </div>
+                                        {records.deposits && records.deposits.length > 0 ? (
+                                          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+                                            <table className="w-full text-right text-xs min-w-[500px]">
+                                              <thead className="bg-gray-50 border-b border-gray-100">
+                                                <tr>
+                                                  <th className="px-4 py-2.5 font-semibold text-gray-600">التاريخ</th>
+                                                  <th className="px-4 py-2.5 font-semibold text-gray-600">المبلغ</th>
+                                                  <th className="px-4 py-2.5 font-semibold text-gray-600">رقم العملية</th>
+                                                  <th className="px-4 py-2.5 font-semibold text-gray-600">التحقق</th>
+                                                  <th className="px-4 py-2.5 font-semibold text-gray-600">الحالة</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody className="divide-y divide-gray-50">
+                                                {records.deposits.map((d: any) => (
+                                                  <tr key={d.id} className="hover:bg-gray-50">
+                                                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{new Date(d.created_at).toLocaleDateString('ar-SA')}</td>
+                                                    <td className="px-4 py-3 font-mono font-bold text-[#0936AD]">${d.amount_usd || '—'}</td>
+                                                    <td className="px-4 py-3 font-mono text-gray-500 truncate max-w-[120px]" dir="ltr" title={d.tx_id}>{d.tx_id?.slice(0, 16)}…</td>
+                                                    <td className="px-4 py-3">
+                                                      {d.verification_method === 'auto'
+                                                        ? <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs">تلقائي</span>
+                                                        : <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs">يدوي</span>}
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                      {d.status === 'approved' && <span className="bg-green-50 text-green-700 px-2 py-0.5 rounded text-xs font-semibold">مكتمل</span>}
+                                                      {d.status === 'rejected' && <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded text-xs font-semibold">مرفوض</span>}
+                                                      {(d.status === 'pending' || d.status === 'pending_verification') && <span className="bg-orange-50 text-orange-600 px-2 py-0.5 rounded text-xs font-semibold">معلق</span>}
+                                                    </td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        ) : (
+                                          <div className="text-gray-400 text-sm bg-white rounded-xl border border-dashed border-gray-200 p-6 text-center">لا توجد دفعات مسجلة</div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                              </React.Fragment>
+                             );
+                           })}
                         </tbody>
                      </table>
                   </div>
@@ -599,6 +836,35 @@ export default function Admin() {
              <div className="fixed inset-0 bg-primary/20 z-0 md:hidden" onClick={() => setIsSidebarOpen(false)}></div>
           )}
           
+          {/* Delete User Confirmation Modal */}
+          {showDeleteConfirm && (
+             <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+                <div className="bg-white rounded-2xl w-full max-w-sm p-6 relative shadow-xl" dir="rtl">
+                  <div className="flex items-center gap-3 mb-4 text-red-600">
+                    <div className="bg-red-50 p-2 rounded-xl"><AlertTriangle size={22} /></div>
+                    <h2 className="text-lg font-bold">تأكيد حذف المستخدم</h2>
+                  </div>
+                  <p className="text-gray-600 text-sm mb-6">
+                    هذا الإجراء لا يمكن التراجع عنه. سيتم حذف المستخدم وجميع بياناته المرتبطة به بما في ذلك المحافظ وسجلات الدفعات.
+                  </p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => handleDeleteUser(showDeleteConfirm)}
+                      className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl font-medium transition"
+                    >
+                      تأكيد الحذف
+                    </button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(null)}
+                      className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-xl font-medium transition"
+                    >
+                      إلغاء
+                    </button>
+                  </div>
+                </div>
+             </div>
+          )}
+
           {/* Admin Wallet Link Modal */}
           {showAddModal && (
              <div className="fixed inset-0 bg-primary/50 flex items-center justify-center p-4 z-50">
