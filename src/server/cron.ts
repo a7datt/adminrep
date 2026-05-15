@@ -21,9 +21,10 @@ export function setupCronJobs() {
         const expiresAt = new Date(sub.expires_at);
         if (expiresAt < now) {
           if (sub.auto_renew) {
-            const cost = sub.max_wallets * 0.50;
-            if (sub.current_balance >= cost) {
-              const newBal = Number(sub.current_balance) - cost;
+            const costCents = sub.max_wallets * 50;
+            const balanceCents = Math.round(Number(sub.current_balance) * 100);
+            if (balanceCents >= costCents) {
+              const newBal = (balanceCents - costCents) / 100;
               const newExpires = new Date();
               newExpires.setMonth(newExpires.getMonth() + 1);
 

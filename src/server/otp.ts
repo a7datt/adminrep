@@ -14,7 +14,8 @@ export function generateOTP(): string {
 // HMAC-SHA256 is used so the secret key adds an extra layer beyond a
 // plain SHA-256 hash.  The key is the same SESSION_ENCRYPTION_KEY already
 // required at startup, avoiding a new env var.
-const OTP_HASH_SECRET = process.env.SESSION_ENCRYPTION_KEY || '';
+const OTP_HASH_SECRET = process.env.SESSION_ENCRYPTION_KEY;
+if (!OTP_HASH_SECRET) throw new Error('SESSION_ENCRYPTION_KEY environment variable is required');
 
 function hashOTP(email: string, code: string, type: string): string {
   // Bind hash to (email, type) so the same code for a different purpose
