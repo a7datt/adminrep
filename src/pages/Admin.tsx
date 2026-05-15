@@ -24,24 +24,65 @@ export default function Admin() {
   const [step, setStep] = useState(1);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
+  // Check if stored token is expired before trying to load data
+  const isTokenExpired = (t: string): boolean => {
+    try {
+      const payload = JSON.parse(atob(t.split('.')[1]));
+      if (!payload.exp) return false;
+      return Date.now() >= payload.exp * 1000;
+    } catch {
+      return true;
+    }
+  };
+
   useEffect(() => {
-    if (token) loadData();
+    if (token) {
+      if (isTokenExpired(token)) {
+        localStorage.removeItem('adminToken');
+        setToken('');
+        toast.error('انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً');
+        return;
+      }
+      loadData();
+    }
   }, [token, activeTab]);
+
+  const handleAuthError = (status: number) => {
+    if (status === 401 || status === 403) {
+      localStorage.removeItem('adminToken');
+      setToken('');
+      toast.error('انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً');
+      return true;
+    }
+    return false;
+  };
 
   const loadData = async () => {
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
       if (activeTab === 'dashboard') {
          const res = await fetch('/api/admin/stats', { headers });
+         if (handleAuthError(res.status)) return;
          if (res.ok) setStats(await res.json());
       } else if (activeTab === 'users') {
          const res = await fetch('/api/admin/users', { headers });
-         if (res.ok) setUsers(await res.json());
+         if (handleAuthError(res.status)) return;
+         if (res.ok) {
+           const data = await res.json();
+           // Backend returns paginated { data: [], total, page, limit }
+           setUsers(Array.isArray(data) ? data : (data.data || []));
+         }
       } else if (activeTab === 'payments') {
          const res = await fetch('/api/admin/deposits', { headers });
-         if (res.ok) setDeposits(await res.json());
+         if (handleAuthError(res.status)) return;
+         if (res.ok) {
+           const data = await res.json();
+           // Backend returns paginated { data: [], total, page, limit }
+           setDeposits(Array.isArray(data) ? data : (data.data || []));
+         }
       } else if (activeTab === 'settings') {
          const res = await fetch('/api/admin/settings', { headers });
+         if (handleAuthError(res.status)) return;
          if (res.ok) {
             const data = await res.json();
             // Handle both array or object from backend just in case
