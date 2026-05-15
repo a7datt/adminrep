@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist/server.mjs --packages=external",
-    "start": "NODE_ENV=production node dist/server.mjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --target=node18 --format=esm --outfile=server.mjs --packages=external",
+    "start": "NODE_ENV=production node server.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"

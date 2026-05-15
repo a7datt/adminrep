@@ -122,10 +122,8 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // FIX: المسار الصحيح لملفات dist
-    // بعد البناء: server.mjs يكون داخل dist/ وملفات React كذلك في dist/
-    // __dirname هنا = مسار dist/ عند التشغيل من dist/server.mjs
-    const distPath = __dirname;
+    // server.mjs في جذر المشروع، وملفات React في dist/
+    const distPath = path.join(__dirname, 'dist');
     app.use(express.static(distPath));
 
     // FIX: SPA fallback — فقط للمسارات التي ليست /api
