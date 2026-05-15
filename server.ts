@@ -39,19 +39,15 @@ async function startServer() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: process.env.NODE_ENV === 'production'
-          ? ["'self'", "https://fonts.googleapis.com"]
-          : ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        styleSrcElem: process.env.NODE_ENV === 'production'
-          ? ["'self'", "https://fonts.googleapis.com"]
-          : ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        // FIX: نسمح بـ unsafe-inline للـ scripts والـ styles حتى تعمل React و Tailwind
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        styleSrcElem: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
         imgSrc: ["'self'", "data:", "https://i.ibb.co"],
         connectSrc: ["'self'"],
         objectSrc: ["'none'"],
         frameSrc: ["'none'"],
-        upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
       },
     },
     hsts: {
@@ -78,6 +74,8 @@ async function startServer() {
 
   app.use(cors({
     origin: (origin, callback) => {
+      // إذا لم تُحدَّد ALLOWED_ORIGINS نسمح بالكل (مفيد على Render أثناء الإعداد)
+      if (!allowedOrigins.length) return callback(null, true);
       if (!origin && process.env.NODE_ENV !== 'production') return callback(null, true);
       if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
       callback(new Error(`CORS policy: origin ${origin} not allowed`));
@@ -90,29 +88,33 @@ async function startServer() {
   app.use(express.json({ limit: '10kb' }));
   app.use(cookieParser());
 
-  if (process.env.NODE_ENV === 'production') {
-    app.use((req, res, next) => {
-      if (req.headers['x-forwarded-proto'] !== 'https') {
-        return res.redirect(301, `https://${req.headers.host}${req.url}`);
-      }
-      next();
-    });
-  }
+  // FIX: HTTPS redirect معطّل — Render يتعامل مع HTTPS تلقائياً
+  // تفعيله يسبب redirect loop على Render
+  // if (process.env.NODE_ENV === 'production') {
+  //   app.use((req, res, next) => {
+  //     if (req.headers['x-forwarded-proto'] !== 'https') {
+  //       return res.redirect(301, `https://${req.headers.host}${req.url}`);
+  //     }
+  //     next();
+  //   });
+  // }
 
   app.use('/api', globalApiRateLimiter);
 
+  // ── API Routes (قبل static و catch-all) ──
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', service: 'admin' });
   });
 
-  // Admin routes only
   app.use('/api/admin', adminRoutes);
 
+  // ── Global error handler ──
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.error('[Global Error]', err.message || err);
     res.status(err.status || 500).json({ error: 'Internal server error' });
   });
 
+  // ── Frontend ──
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -120,9 +122,18 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, '.');
+    // FIX: المسار الصحيح لملفات dist
+    // بعد البناء: server.mjs يكون داخل dist/ وملفات React كذلك في dist/
+    // __dirname هنا = مسار dist/ عند التشغيل من dist/server.mjs
+    const distPath = __dirname;
     app.use(express.static(distPath));
+
+    // FIX: SPA fallback — فقط للمسارات التي ليست /api
     app.get('*', (req, res) => {
+      if (req.path.startsWith('/api')) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

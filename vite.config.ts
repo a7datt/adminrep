@@ -10,6 +10,11 @@ export default defineConfig(({ mode }) => {
     define: {
       'process.env.VITE_SUPABASE_URL': JSON.stringify(env.VITE_SUPABASE_URL),
     },
+    // FIX: نحدد outDir بشكل صريح
+    build: {
+      outDir: 'dist',
+      emptyOutDir: true,
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
