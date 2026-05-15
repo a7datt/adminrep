@@ -347,12 +347,17 @@ export const authenticateApiKey = async (req: Request, res: Response, next: Next
 
   const { data, error } = await supabase
     .from('api_keys')
-    .select('user_id')
+    .select('user_id, is_disabled')
     .eq('key_hash', keyHash)
     .single();
 
   if (error || !data) {
     res.status(401).json({ error: 'INVALID_API_KEY', message: 'API key is invalid' });
+    return;
+  }
+
+  if (data.is_disabled) {
+    res.status(403).json({ error: 'API_KEY_DISABLED', message: 'Your API key has been disabled by an administrator.' });
     return;
   }
 
