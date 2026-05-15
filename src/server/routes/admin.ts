@@ -681,6 +681,93 @@ router.post('/deposits/:id/reverify', reverifyRateLimiter, async (req, res) => {
   }
 });
 
+// ─── Delete User ──────────────────────────────
+router.delete('/users/:id', async (req, res) => {
+  try {
+    const userId = req.params.id;
+    if (!isValidUUID(userId)) return res.status(400).json({ error: 'Invalid user ID format' });
+
+    const { data: user } = await supabase.from('users').select('id').eq('id', userId).single();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Delete cascading data
+    await supabase.from('api_keys').delete().eq('user_id', userId);
+    await supabase.from('wallets').delete().eq('user_id', userId);
+    await supabase.from('deposit_requests').delete().eq('user_id', userId);
+    await supabase.from('subscriptions').delete().eq('user_id', userId);
+    await supabase.from('users').delete().eq('id', userId);
+
+    const adminId = (req as any).admin?.adminId;
+    await logAuditEvent(adminId, 'ADMIN_DELETE_USER', { targetUser: userId }, req.ip);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Delete User Error]', (error as Error).message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Toggle User API Key ──────────────────────
+router.post('/users/:id/toggle-api', async (req, res) => {
+  try {
+    const userId = req.params.id;
+    if (!isValidUUID(userId)) return res.status(400).json({ error: 'Invalid user ID format' });
+
+    const { data: apiKey } = await supabase
+      .from('api_keys')
+      .select('id, is_disabled')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (!apiKey) return res.status(404).json({ error: 'No API key found for this user' });
+
+    const newState = !apiKey.is_disabled;
+    await supabase.from('api_keys').update({ is_disabled: newState }).eq('id', apiKey.id);
+
+    const adminId = (req as any).admin?.adminId;
+    await logAuditEvent(adminId, newState ? 'ADMIN_DISABLE_API_KEY' : 'ADMIN_ENABLE_API_KEY', { targetUser: userId }, req.ip);
+
+    res.json({ success: true, is_disabled: newState });
+  } catch (error) {
+    console.error('[Toggle API Error]', (error as Error).message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── User Records (detailed info) ────────────
+router.get('/users/:id/records', async (req, res) => {
+  try {
+    const userId = req.params.id;
+    if (!isValidUUID(userId)) return res.status(400).json({ error: 'Invalid user ID format' });
+
+    const [userRes, subRes, walletsRes, depositsRes, apiKeyRes] = await Promise.all([
+      supabase.from('users').select('id, name, email, created_at').eq('id', userId).single(),
+      supabase.from('subscriptions').select('current_balance, status, expires_at, plan').eq('user_id', userId).maybeSingle(),
+      supabase.from('wallets').select('id, wallet_address, account_number, status, created_at').eq('user_id', userId),
+      supabase.from('deposit_requests').select('id, amount_usd, tx_id, status, verification_method, created_at, reviewed_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(50),
+      supabase.from('api_keys').select('id, is_disabled, created_at, last_used_at').eq('user_id', userId).maybeSingle(),
+    ]);
+
+    if (!userRes.data) return res.status(404).json({ error: 'User not found' });
+
+    const wallets = walletsRes.data || [];
+    const buyerWalletsCount = wallets.filter((w: any) => w.status === 'active').length;
+
+    res.json({
+      user: userRes.data,
+      subscription: subRes.data || null,
+      wallets: wallets,
+      wallets_count: wallets.length,
+      buyer_wallets_count: buyerWalletsCount,
+      deposits: depositsRes.data || [],
+      api_key: apiKeyRes.data || null,
+    });
+  } catch (error) {
+    console.error('[User Records Error]', (error as Error).message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ─── Change Admin Password ────────────────────
 router.post('/change-password', async (req, res) => {
   try {
