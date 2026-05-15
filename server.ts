@@ -39,13 +39,14 @@ async function startServer() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        // FIX: نسمح بـ unsafe-inline للـ scripts والـ styles حتى تعمل React و Tailwind
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        scriptSrcElem: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         styleSrcElem: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
-        imgSrc: ["'self'", "data:", "https://i.ibb.co"],
-        connectSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "blob:", "https://i.ibb.co"],
+        connectSrc: ["'self'", process.env.VITE_SUPABASE_URL!],
+        workerSrc: ["'self'", "blob:"],
         objectSrc: ["'none'"],
         frameSrc: ["'none'"],
       },
@@ -108,12 +109,6 @@ async function startServer() {
 
   app.use('/api/admin', adminRoutes);
 
-  // ── Global error handler ──
-  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    console.error('[Global Error]', err.message || err);
-    res.status(err.status || 500).json({ error: 'Internal server error' });
-  });
-
   // ── Frontend ──
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -124,9 +119,21 @@ async function startServer() {
   } else {
     // server.mjs في جذر المشروع، وملفات React في dist/
     const distPath = path.join(__dirname, 'dist');
-    app.use(express.static(distPath));
 
-    // FIX: SPA fallback — فقط للمسارات التي ليست /api
+    // FIX: تحديد MIME types بشكل صريح لمنع إرجاع application/json للـ assets
+    app.use(express.static(distPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.js') || filePath.endsWith('.mjs')) {
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        } else if (filePath.endsWith('.css')) {
+          res.setHeader('Content-Type', 'text/css; charset=utf-8');
+        } else if (filePath.endsWith('.html')) {
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        }
+      },
+    }));
+
+    // SPA fallback — فقط للمسارات التي ليست /api
     app.get('*', (req, res) => {
       if (req.path.startsWith('/api')) {
         res.status(404).json({ error: 'Not found' });
@@ -135,6 +142,12 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  // ── Global error handler (يجب أن يكون آخر middleware) ──
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error('[Global Error]', err.message || err);
+    res.status(err.status || 500).json({ error: 'Internal server error' });
+  });
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🔐 Admin server running on http://0.0.0.0:${PORT}`);
