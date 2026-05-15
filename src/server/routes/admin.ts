@@ -713,15 +713,26 @@ router.post('/users/:id/toggle-api', async (req, res) => {
     const userId = req.params.id;
     if (!isValidUUID(userId)) return res.status(400).json({ error: 'Invalid user ID format' });
 
-    const { data: apiKey } = await supabase
+    // First get the api key id
+    const { data: apiKey, error: fetchErr } = await supabase
       .from('api_keys')
-      .select('id, is_disabled')
+      .select('id')
       .eq('user_id', userId)
       .maybeSingle();
 
+    if (fetchErr) console.error('[Toggle API] fetch error:', fetchErr.message);
     if (!apiKey) return res.status(404).json({ error: 'No API key found for this user' });
 
-    const newState = !apiKey.is_disabled;
+    // Get current is_disabled value separately (column may not exist yet — returns null safely)
+    const { data: stateData } = await supabase
+      .from('api_keys')
+      .select('is_disabled')
+      .eq('id', apiKey.id)
+      .maybeSingle();
+
+    const currentDisabled = stateData?.is_disabled ?? false;
+    const newState = !currentDisabled;
+
     await supabase.from('api_keys').update({ is_disabled: newState }).eq('id', apiKey.id);
 
     const adminId = (req as any).admin?.adminId;
@@ -742,16 +753,34 @@ router.get('/users/:id/records', async (req, res) => {
 
     const [userRes, subRes, walletsRes, depositsRes, apiKeyRes] = await Promise.all([
       supabase.from('users').select('id, name, email, created_at').eq('id', userId).single(),
-      supabase.from('subscriptions').select('current_balance, status, expires_at, plan').eq('user_id', userId).maybeSingle(),
+      supabase.from('subscriptions').select('current_balance, status, expires_at').eq('user_id', userId).maybeSingle(),
       supabase.from('wallets').select('id, wallet_address, account_number, status, created_at').eq('user_id', userId),
-      supabase.from('deposit_requests').select('id, amount_usd, tx_id, status, verification_method, created_at, reviewed_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(50),
-      supabase.from('api_keys').select('id, is_disabled, created_at, last_used_at').eq('user_id', userId).maybeSingle(),
+      supabase.from('deposit_requests').select('id, amount_usd, tx_id, status, created_at, reviewed_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(50),
+      supabase.from('api_keys').select('id, created_at, last_used_at').eq('user_id', userId).maybeSingle(),
     ]);
+
+    // Log individual errors for debugging without failing the whole response
+    if (userRes.error) console.error('[Records] users error:', userRes.error.message);
+    if (subRes.error) console.error('[Records] subscriptions error:', subRes.error.message);
+    if (walletsRes.error) console.error('[Records] wallets error:', walletsRes.error.message);
+    if (depositsRes.error) console.error('[Records] deposits error:', depositsRes.error.message);
+    if (apiKeyRes.error) console.error('[Records] api_keys error:', apiKeyRes.error.message);
 
     if (!userRes.data) return res.status(404).json({ error: 'User not found' });
 
     const wallets = walletsRes.data || [];
     const buyerWalletsCount = wallets.filter((w: any) => w.status === 'active').length;
+
+    // Fetch is_disabled separately so a missing column doesn't break api_keys query
+    let apiKeyDisabled = false;
+    if (apiKeyRes.data?.id) {
+      const { data: disabledData } = await supabase
+        .from('api_keys')
+        .select('is_disabled')
+        .eq('id', apiKeyRes.data.id)
+        .maybeSingle();
+      apiKeyDisabled = disabledData?.is_disabled ?? false;
+    }
 
     res.json({
       user: userRes.data,
@@ -760,7 +789,7 @@ router.get('/users/:id/records', async (req, res) => {
       wallets_count: wallets.length,
       buyer_wallets_count: buyerWalletsCount,
       deposits: depositsRes.data || [],
-      api_key: apiKeyRes.data || null,
+      api_key: apiKeyRes.data ? { ...apiKeyRes.data, is_disabled: apiKeyDisabled } : null,
     });
   } catch (error) {
     console.error('[User Records Error]', (error as Error).message);
