@@ -690,12 +690,9 @@ router.delete('/users/:id', async (req, res) => {
     const { data: user } = await supabase.from('users').select('id').eq('id', userId).single();
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // Delete cascading data
-    await supabase.from('api_keys').delete().eq('user_id', userId);
-    await supabase.from('wallets').delete().eq('user_id', userId);
-    await supabase.from('deposit_requests').delete().eq('user_id', userId);
-    await supabase.from('subscriptions').delete().eq('user_id', userId);
-    await supabase.from('users').delete().eq('id', userId);
+    // Single atomic delete — relies on ON DELETE CASCADE for related tables
+    const { error: deleteErr } = await supabase.from('users').delete().eq('id', userId);
+    if (deleteErr) throw deleteErr;
 
     const adminId = (req as any).admin?.adminId;
     await logAuditEvent(adminId, 'ADMIN_DELETE_USER', { targetUser: userId }, req.ip);
@@ -713,27 +710,23 @@ router.post('/users/:id/toggle-api', async (req, res) => {
     const userId = req.params.id;
     if (!isValidUUID(userId)) return res.status(400).json({ error: 'Invalid user ID format' });
 
-    // First get the api key id
     const { data: apiKey, error: fetchErr } = await supabase
       .from('api_keys')
-      .select('id')
+      .select('id, is_disabled')
       .eq('user_id', userId)
       .maybeSingle();
 
     if (fetchErr) console.error('[Toggle API] fetch error:', fetchErr.message);
     if (!apiKey) return res.status(404).json({ error: 'No API key found for this user' });
 
-    // Get current is_disabled value separately (column may not exist yet — returns null safely)
-    const { data: stateData } = await supabase
+    const newState = !apiKey.is_disabled;
+
+    const { error: updateErr } = await supabase
       .from('api_keys')
-      .select('is_disabled')
-      .eq('id', apiKey.id)
-      .maybeSingle();
+      .update({ is_disabled: newState })
+      .eq('id', apiKey.id);
 
-    const currentDisabled = stateData?.is_disabled ?? false;
-    const newState = !currentDisabled;
-
-    await supabase.from('api_keys').update({ is_disabled: newState }).eq('id', apiKey.id);
+    if (updateErr) throw updateErr;
 
     const adminId = (req as any).admin?.adminId;
     await logAuditEvent(adminId, newState ? 'ADMIN_DISABLE_API_KEY' : 'ADMIN_ENABLE_API_KEY', { targetUser: userId }, req.ip);
