@@ -118,7 +118,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     // server.mjs في جذر المشروع، وملفات React في dist/
-    const distPath = path.join(__dirname, 'dist');
+    const distPath = path.join(__dirname);
 
     // FIX: تحديد MIME types بشكل صريح لمنع إرجاع application/json للـ assets
     app.use(express.static(distPath, {
