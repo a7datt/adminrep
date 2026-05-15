@@ -84,7 +84,8 @@ router.post('/subscription/upgrade', async (req, res) => {
     }
     const { num_wallets, num_months } = parseResult.data;
 
-    const cost = num_wallets * num_months * 0.50;
+    // Use integer cents to avoid floating-point precision errors
+    const costCents = num_wallets * num_months * 50;
 
     const { data: sub, error: subError } = await supabase
       .from('subscriptions')
@@ -94,15 +95,21 @@ router.post('/subscription/upgrade', async (req, res) => {
 
     if (subError) throw subError;
 
-    if (Number(sub.current_balance) < cost) {
+    const balanceCents = Math.round(Number(sub.current_balance) * 100);
+
+    if (balanceCents < costCents) {
       return res.status(400).json({ error: 'Insufficient balance' });
     }
 
-    const newBalance = Number(sub.current_balance) - cost;
+    const newBalanceCents = balanceCents - costCents;
+    const newBalance = newBalanceCents / 100;
+
     const currentExpiry = sub.expires_at ? new Date(sub.expires_at) : new Date();
     const baseDate = currentExpiry > new Date() ? currentExpiry : new Date();
     baseDate.setMonth(baseDate.getMonth() + num_months);
 
+    // SECURITY: Optimistic locking — only update if balance hasn't changed since we read it.
+    // Prevents double-spend when two requests run concurrently for the same user.
     const { data: newSub, error: updateError } = await supabase
       .from('subscriptions')
       .update({
@@ -112,10 +119,14 @@ router.post('/subscription/upgrade', async (req, res) => {
         status: 'active',
       })
       .eq('user_id', userId)
+      .eq('current_balance', sub.current_balance)
       .select('*')
       .single();
 
     if (updateError) throw updateError;
+    if (!newSub) {
+      return res.status(409).json({ error: 'Balance changed during request. Please try again.' });
+    }
 
     await logAuditEvent(userId, 'SUBSCRIPTION_UPGRADE', { num_wallets, num_months, cost }, req.ip);
 

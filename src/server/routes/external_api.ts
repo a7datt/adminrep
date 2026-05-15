@@ -247,6 +247,9 @@ router.post('/wallets/shamcash/:walletAddress/transfer', transferRateLimiter, as
 
     const wallet = await getWalletByAddress(walletAddress, userId);
     if (!wallet) return res.status(404).json({ error: 'NOT_FOUND', message: 'Wallet not found' });
+    if (wallet.status !== 'active') {
+      return res.status(401).json({ error: 'WALLET_SESSION_EXPIRED', message: 'Wallet session expired. Please reconnect in dashboard.' });
+    }
 
     const client = await ShamCashService.getClientForWallet(wallet.id, userId);
 

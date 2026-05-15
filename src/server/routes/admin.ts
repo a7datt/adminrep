@@ -684,6 +684,15 @@ router.post('/deposits/:id/reverify', reverifyRateLimiter, async (req, res) => {
 // ─── Delete User ──────────────────────────────
 router.delete('/users/:id', async (req, res) => {
   try {
+    const adminId = (req as any).admin?.adminId;
+
+    // Rate limit: max 10 deletes per 10 minutes per admin
+    const { rateLimiter } = await import('../middleware.js');
+    const rl = rateLimiter.check(`admin_delete:${adminId}`, 10, 10 * 60 * 1000);
+    if (!rl.allowed) {
+      return res.status(429).json({ error: 'Too many delete requests. Try again later.' });
+    }
+
     const userId = req.params.id;
     if (!isValidUUID(userId)) return res.status(400).json({ error: 'Invalid user ID format' });
 
@@ -694,7 +703,6 @@ router.delete('/users/:id', async (req, res) => {
     const { error: deleteErr } = await supabase.from('users').delete().eq('id', userId);
     if (deleteErr) throw deleteErr;
 
-    const adminId = (req as any).admin?.adminId;
     await logAuditEvent(adminId, 'ADMIN_DELETE_USER', { targetUser: userId }, req.ip);
 
     res.json({ success: true });
